@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PNC Bank Demo - Login</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <style>
+        body {
+            padding-top: 20px;
+            padding-bottom: 20px;
+            font-family: Arial, sans-serif;
+            background-color: #f8f9fa;
+        }
+        .login-container {
+            max-width: 400px;
+            margin: 0 auto;
+            margin-top: 100px;
+        }
+        .card {
+            border: none;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+        .card-header {
+            background-color: #00205B;
+            color: white;
+            border-radius: 8px 8px 0 0 !important;
+            padding: 20px;
+        }
+        .btn-primary {
+            background-color: #00205B;
+            border-color: #00205B;
+            width: 100%;
+            padding: 10px;
+        }
+        .btn-primary:hover {
+            background-color: #001745;
+            border-color: #001745;
+        }
+        .login-help {
+            margin-top: 20px;
+            text-align: center;
+            color: #6c757d;
+        }
+        .alert {
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="login-container">
+            <div class="text-center mb-4">
+                <h2>PNC Bank Demo</h2>
+                <p class="text-muted">Please sign in to access the banking system</p>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <h4 class="mb-0">Login</h4>
+                </div>
+                <div class="card-body">
+                    <!-- Show error message if login fails -->
+                    <div th:if="${param.error}" class="alert alert-danger">
+                        Invalid username or password.
+                    </div>
+                    
+                    <!-- Show message if logged out -->
+                    <div th:if="${param.logout}" class="alert alert-success">
+                        You have been logged out.
+                    </div>
+                    
+                    <form th:action="@{/login}" method="post">
+                        <div class="form-group">
+                            <label for="username">Username</label>
+                            <input type="text" id="username" name="username" class="form-control" required autofocus>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="password">Password</label>
+                            <input type="password" id="password" name="password" class="form-control" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <button type="submit" class="btn btn-primary">Sign In</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            
+            <div class="login-help">
+                <div>Demo Credentials:</div>
+                <div>Username: user, Password: password</div>
+                <div>Username: admin, Password: password</div>
+                <p class="mt-3">
+                    <a href="/">Back to Home</a>
+                </p>
+            </div>
+        </div>
+    </div>
+</body>
+</html> 
