@@ -1,6 +1,7 @@
 package io.pnc.bank.demo.exception;
 
 import io.pnc.bank.demo.dto.ApiResponse;
+import jakarta.persistence.OptimisticLockException;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -72,6 +73,14 @@ public class GlobalExceptionHandler {
         log.error("Illegal state exception: {}", ex.getMessage(), ex);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.error(ex.getMessage()));
+    }
+
+    @ExceptionHandler({OptimisticLockException.class, ConcurrentModificationException.class})
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public ResponseEntity<ApiResponse<Void>> handleConcurrentModificationException(Exception ex, WebRequest request) {
+        log.error("Concurrent modification detected: {}", ex.getMessage(), ex);
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error("Transaction failed due to concurrent modification. Please retry."));
     }
 
     // Handle Web view exceptions
