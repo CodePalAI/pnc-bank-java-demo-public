@@ -136,6 +136,31 @@ public class TransactionServiceImpl implements TransactionService {
         return transactionMapper.toDto(transaction);
     }
 
+    /**
+     * Transfers money between accounts with proper concurrency control to prevent race conditions.
+     * 
+     * <h3>Concurrency Control Mechanisms:</h3>
+     * <ul>
+     *   <li><strong>Pessimistic Locking:</strong> Uses database-level write locks to prevent concurrent modifications</li>
+     *   <li><strong>Optimistic Locking:</strong> Account entity includes version field for optimistic concurrency control</li>
+     *   <li><strong>Deadlock Prevention:</strong> Acquires locks in deterministic order (sorted by account number)</li>
+     *   <li><strong>Transaction Isolation:</strong> Uses SERIALIZABLE isolation level for maximum consistency</li>
+     * </ul>
+     * 
+     * <h3>Error Handling:</h3>
+     * <ul>
+     *   <li>OptimisticLockException → ConcurrentModificationException (HTTP 409)</li>
+     *   <li>Insufficient balance validation with proper locking</li>
+     *   <li>Account status validation under lock</li>
+     * </ul>
+     * 
+     * @param transferRequest the transfer details including source, destination, and amount
+     * @return TransactionDTO representing the outgoing transaction
+     * @throws ConcurrentModificationException if the transfer fails due to concurrent modification
+     * @throws InsufficientBalanceException if source account has insufficient balance
+     * @throws IllegalStateException if any account is not in ACTIVE status
+     * @throws ResourceNotFoundException if any account is not found
+     */
     @Override
     @Transactional
     public TransactionDTO transfer(TransferRequest transferRequest) {
