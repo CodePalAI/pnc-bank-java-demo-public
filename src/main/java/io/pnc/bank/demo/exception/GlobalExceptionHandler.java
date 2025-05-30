@@ -3,6 +3,7 @@ package io.pnc.bank.demo.exception;
 import io.pnc.bank.demo.dto.ApiResponse;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.BindException;
@@ -74,11 +75,21 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(ex.getMessage()));
     }
 
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public ResponseEntity<ApiResponse<Void>> handleOptimisticLockingFailureException(OptimisticLockingFailureException ex, WebRequest request) {
+        log.warn("Optimistic locking conflict detected: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error("Transaction conflict detected. Please try again. " +
+                        "This can happen when multiple operations are performed on the same account simultaneously."));
+    }
+
     // Handle Web view exceptions
     @ExceptionHandler({
             ResourceNotFoundException.class,
             ResourceAlreadyExistsException.class,
-            InsufficientBalanceException.class
+            InsufficientBalanceException.class,
+            OptimisticLockingFailureException.class
     })
     public ModelAndView handleWebViewExceptions(Exception ex, WebRequest request) {
         if (isApiRequest(request)) {
