@@ -4,6 +4,7 @@ import io.pnc.bank.demo.dto.DepositRequest;
 import io.pnc.bank.demo.dto.TransactionDTO;
 import io.pnc.bank.demo.dto.TransferRequest;
 import io.pnc.bank.demo.dto.WithdrawalRequest;
+import io.pnc.bank.demo.exception.ConcurrentModificationException;
 import io.pnc.bank.demo.exception.InsufficientBalanceException;
 import io.pnc.bank.demo.exception.ResourceNotFoundException;
 import io.pnc.bank.demo.mapper.TransactionMapper;
@@ -14,12 +15,15 @@ import io.pnc.bank.demo.model.TransactionType;
 import io.pnc.bank.demo.repository.AccountRepository;
 import io.pnc.bank.demo.repository.TransactionRepository;
 import io.pnc.bank.demo.service.TransactionService;
+import jakarta.persistence.OptimisticLockException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -162,66 +166,87 @@ public class TransactionServiceImpl implements TransactionService {
      * @throws ResourceNotFoundException if any account is not found
      */
     @Override
-    @Transactional
+    @Transactional(isolation = Isolation.SERIALIZABLE)
     public TransactionDTO transfer(TransferRequest transferRequest) {
-        Account sourceAccount = findAccountByAccountNumber(transferRequest.getFromAccountNumber());
-        Account destinationAccount = findAccountByAccountNumber(transferRequest.getToAccountNumber());
-        
-        // Ensure accounts are active
-        validateAccountIsActive(sourceAccount);
-        validateAccountIsActive(destinationAccount);
-        
-        // Check sufficient balance
-        if (sourceAccount.getBalance().compareTo(transferRequest.getAmount()) < 0) {
-            throw new InsufficientBalanceException("Insufficient balance for transfer from account " + sourceAccount.getAccountNumber());
+        try {
+            // Use pessimistic locking to acquire locks on both accounts in consistent order (by account number)
+            // to prevent deadlocks
+            Account sourceAccount;
+            Account destinationAccount;
+            
+            String fromAccountNumber = transferRequest.getFromAccountNumber();
+            String toAccountNumber = transferRequest.getToAccountNumber();
+            
+            // Acquire locks in deterministic order to prevent deadlocks
+            if (fromAccountNumber.compareTo(toAccountNumber) < 0) {
+                sourceAccount = findAccountByAccountNumberWithLock(fromAccountNumber);
+                destinationAccount = findAccountByAccountNumberWithLock(toAccountNumber);
+            } else {
+                destinationAccount = findAccountByAccountNumberWithLock(toAccountNumber);
+                sourceAccount = findAccountByAccountNumberWithLock(fromAccountNumber);
+            }
+            
+            // Ensure accounts are active
+            validateAccountIsActive(sourceAccount);
+            validateAccountIsActive(destinationAccount);
+            
+            // Check sufficient balance
+            if (sourceAccount.getBalance().compareTo(transferRequest.getAmount()) < 0) {
+                throw new InsufficientBalanceException("Insufficient balance for transfer from account " + sourceAccount.getAccountNumber());
+            }
+            
+            // Generate a common reference ID for both transactions
+            String referenceId = UUID.randomUUID().toString();
+            LocalDateTime transactionDate = LocalDateTime.now();
+            
+            // Update source account balance
+            BigDecimal sourceNewBalance = sourceAccount.getBalance().subtract(transferRequest.getAmount());
+            sourceAccount.setBalance(sourceNewBalance);
+            sourceAccount = accountRepository.save(sourceAccount);
+            
+            // Create outgoing transaction
+            Transaction outgoingTransaction = Transaction.builder()
+                    .account(sourceAccount)
+                    .amount(transferRequest.getAmount())
+                    .transactionType(TransactionType.TRANSFER_OUT)
+                    .description("Transfer to " + destinationAccount.getAccountNumber() + 
+                            (transferRequest.getDescription() != null ? ": " + transferRequest.getDescription() : ""))
+                    .transactionDate(transactionDate)
+                    .referenceId(referenceId)
+                    .balanceAfterTransaction(sourceNewBalance)
+                    .build();
+            
+            outgoingTransaction = transactionRepository.save(outgoingTransaction);
+            
+            // Update destination account balance
+            BigDecimal destNewBalance = destinationAccount.getBalance().add(transferRequest.getAmount());
+            destinationAccount.setBalance(destNewBalance);
+            destinationAccount = accountRepository.save(destinationAccount);
+            
+            // Create incoming transaction
+            Transaction incomingTransaction = Transaction.builder()
+                    .account(destinationAccount)
+                    .amount(transferRequest.getAmount())
+                    .transactionType(TransactionType.TRANSFER_IN)
+                    .description("Transfer from " + sourceAccount.getAccountNumber() + 
+                            (transferRequest.getDescription() != null ? ": " + transferRequest.getDescription() : ""))
+                    .transactionDate(transactionDate)
+                    .referenceId(referenceId)
+                    .balanceAfterTransaction(destNewBalance)
+                    .build();
+            
+            transactionRepository.save(incomingTransaction);
+            
+            log.info("Transfer of {} from account {} to account {} processed", 
+                    transferRequest.getAmount(), sourceAccount.getAccountNumber(), destinationAccount.getAccountNumber());
+            
+            return transactionMapper.toDto(outgoingTransaction);
+            
+        } catch (OptimisticLockException | ObjectOptimisticLockingFailureException ex) {
+            log.warn("Optimistic lock exception during transfer from {} to {}: {}", 
+                    transferRequest.getFromAccountNumber(), transferRequest.getToAccountNumber(), ex.getMessage());
+            throw new ConcurrentModificationException("Transfer failed due to concurrent modification. Please try again.", ex);
         }
-        
-        // Generate a common reference ID for both transactions
-        String referenceId = UUID.randomUUID().toString();
-        LocalDateTime transactionDate = LocalDateTime.now();
-        
-        // Update source account balance
-        BigDecimal sourceNewBalance = sourceAccount.getBalance().subtract(transferRequest.getAmount());
-        sourceAccount.setBalance(sourceNewBalance);
-        sourceAccount = accountRepository.save(sourceAccount);
-        
-        // Create outgoing transaction
-        Transaction outgoingTransaction = Transaction.builder()
-                .account(sourceAccount)
-                .amount(transferRequest.getAmount())
-                .transactionType(TransactionType.TRANSFER_OUT)
-                .description("Transfer to " + destinationAccount.getAccountNumber() + 
-                        (transferRequest.getDescription() != null ? ": " + transferRequest.getDescription() : ""))
-                .transactionDate(transactionDate)
-                .referenceId(referenceId)
-                .balanceAfterTransaction(sourceNewBalance)
-                .build();
-        
-        outgoingTransaction = transactionRepository.save(outgoingTransaction);
-        
-        // Update destination account balance
-        BigDecimal destNewBalance = destinationAccount.getBalance().add(transferRequest.getAmount());
-        destinationAccount.setBalance(destNewBalance);
-        destinationAccount = accountRepository.save(destinationAccount);
-        
-        // Create incoming transaction
-        Transaction incomingTransaction = Transaction.builder()
-                .account(destinationAccount)
-                .amount(transferRequest.getAmount())
-                .transactionType(TransactionType.TRANSFER_IN)
-                .description("Transfer from " + sourceAccount.getAccountNumber() + 
-                        (transferRequest.getDescription() != null ? ": " + transferRequest.getDescription() : ""))
-                .transactionDate(transactionDate)
-                .referenceId(referenceId)
-                .balanceAfterTransaction(destNewBalance)
-                .build();
-        
-        transactionRepository.save(incomingTransaction);
-        
-        log.info("Transfer of {} from account {} to account {} processed", 
-                transferRequest.getAmount(), sourceAccount.getAccountNumber(), destinationAccount.getAccountNumber());
-        
-        return transactionMapper.toDto(outgoingTransaction);
     }
 
     @Override
@@ -260,6 +285,11 @@ public class TransactionServiceImpl implements TransactionService {
     
     private Account findAccountByAccountNumber(String accountNumber) {
         return accountRepository.findByAccountNumber(accountNumber)
+                .orElseThrow(() -> new ResourceNotFoundException("Account not found with account number: " + accountNumber));
+    }
+    
+    private Account findAccountByAccountNumberWithLock(String accountNumber) {
+        return accountRepository.findByAccountNumberWithLock(accountNumber)
                 .orElseThrow(() -> new ResourceNotFoundException("Account not found with account number: " + accountNumber));
     }
     
