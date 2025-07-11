@@ -33,8 +33,8 @@ The application comes with a demo mode that preloads sample data for demonstrati
 
 ```bash
 # Clone this repository
-git clone https://github.com/yourusername/pnc-bank-demo.git
-cd pnc-bank-demo
+git clone https://github.com/CodePalAI/pnc-bank-java-demo-public.git
+cd pnc-bank-java-demo-public
 
 # Build the application
 mvn clean install
