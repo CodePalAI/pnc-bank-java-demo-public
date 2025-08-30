@@ -1,6 +1,7 @@
 package io.pnc.bank.demo.exception;
 
 import io.pnc.bank.demo.dto.ApiResponse;
+import jakarta.persistence.OptimisticLockException;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -74,11 +75,29 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(ex.getMessage()));
     }
 
+    @ExceptionHandler(ConcurrentModificationException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public ResponseEntity<ApiResponse<Void>> handleConcurrentModificationException(ConcurrentModificationException ex, WebRequest request) {
+        log.error("Concurrent modification exception: {}", ex.getMessage(), ex);
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error("Transaction failed due to concurrent modification. Please try again."));
+    }
+
+    @ExceptionHandler(OptimisticLockException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public ResponseEntity<ApiResponse<Void>> handleOptimisticLockException(OptimisticLockException ex, WebRequest request) {
+        log.error("Optimistic lock exception: {}", ex.getMessage(), ex);
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error("Transaction failed due to concurrent modification. Please try again."));
+    }
+
     // Handle Web view exceptions
     @ExceptionHandler({
             ResourceNotFoundException.class,
             ResourceAlreadyExistsException.class,
-            InsufficientBalanceException.class
+            InsufficientBalanceException.class,
+            ConcurrentModificationException.class,
+            OptimisticLockException.class
     })
     public ModelAndView handleWebViewExceptions(Exception ex, WebRequest request) {
         if (isApiRequest(request)) {
