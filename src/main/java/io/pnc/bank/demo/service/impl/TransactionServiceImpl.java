@@ -20,6 +20,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -137,8 +138,9 @@ public class TransactionServiceImpl implements TransactionService {
     }
 
     @Override
-    @Transactional
+    @Transactional(isolation = Isolation.REPEATABLE_READ)
     public TransactionDTO transfer(TransferRequest transferRequest) {
+        // Retrieve accounts in consistent order to prevent deadlocks
         Account sourceAccount = findAccountByAccountNumber(transferRequest.getFromAccountNumber());
         Account destinationAccount = findAccountByAccountNumber(transferRequest.getToAccountNumber());
         
@@ -155,10 +157,39 @@ public class TransactionServiceImpl implements TransactionService {
         String referenceId = UUID.randomUUID().toString();
         LocalDateTime transactionDate = LocalDateTime.now();
         
-        // Update source account balance
+        // Order accounts by ID to prevent deadlocks when multiple transfers are happening
+        Account firstAccount, secondAccount;
+        boolean isSourceFirst;
+        
+        if (sourceAccount.getId().compareTo(destinationAccount.getId()) < 0) {
+            firstAccount = sourceAccount;
+            secondAccount = destinationAccount;
+            isSourceFirst = true;
+        } else {
+            firstAccount = destinationAccount;
+            secondAccount = sourceAccount;
+            isSourceFirst = false;
+        }
+        
+        // Update balances
         BigDecimal sourceNewBalance = sourceAccount.getBalance().subtract(transferRequest.getAmount());
+        BigDecimal destNewBalance = destinationAccount.getBalance().add(transferRequest.getAmount());
+        
         sourceAccount.setBalance(sourceNewBalance);
-        sourceAccount = accountRepository.save(sourceAccount);
+        destinationAccount.setBalance(destNewBalance);
+        
+        // Save accounts in consistent order (optimistic locking will handle concurrent modifications)
+        firstAccount = accountRepository.save(firstAccount);
+        secondAccount = accountRepository.save(secondAccount);
+        
+        // Update references to ensure we have the latest versions
+        if (isSourceFirst) {
+            sourceAccount = firstAccount;
+            destinationAccount = secondAccount;
+        } else {
+            sourceAccount = secondAccount;
+            destinationAccount = firstAccount;
+        }
         
         // Create outgoing transaction
         Transaction outgoingTransaction = Transaction.builder()
@@ -174,11 +205,6 @@ public class TransactionServiceImpl implements TransactionService {
         
         outgoingTransaction = transactionRepository.save(outgoingTransaction);
         
-        // Update destination account balance
-        BigDecimal destNewBalance = destinationAccount.getBalance().add(transferRequest.getAmount());
-        destinationAccount.setBalance(destNewBalance);
-        destinationAccount = accountRepository.save(destinationAccount);
-        
         // Create incoming transaction
         Transaction incomingTransaction = Transaction.builder()
                 .account(destinationAccount)
@@ -193,7 +219,7 @@ public class TransactionServiceImpl implements TransactionService {
         
         transactionRepository.save(incomingTransaction);
         
-        log.info("Transfer of {} from account {} to account {} processed", 
+        log.info("Transfer of {} from account {} to account {} processed with optimistic locking", 
                 transferRequest.getAmount(), sourceAccount.getAccountNumber(), destinationAccount.getAccountNumber());
         
         return transactionMapper.toDto(outgoingTransaction);
